@@ -48,8 +48,8 @@ const (
 )
 
 type Card struct {
-	suit  Suit
-	value int
+	Suit
+	Value int
 }
 
 func NewCard(s Suit, v int) Card {
@@ -58,14 +58,14 @@ func NewCard(s Suit, v int) Card {
 	}
 
 	return Card{
-		suit:  s,
-		value: v,
+		Suit:  s,
+		Value: v,
 	}
 }
 
 func (c Card) String() string {
-	val := strconv.Itoa(c.value)
-	switch c.value {
+	val := strconv.Itoa(c.Value)
+	switch c.Value {
 	case 1:
 		val = "ace"
 	case 11:
@@ -76,7 +76,7 @@ func (c Card) String() string {
 		val = "king"
 	}
 
-	return fmt.Sprintf("%s of %s %s ", val, c.suit, c.suit.UniCode())
+	return fmt.Sprintf("%s of %s %s ", val, c.Suit, c.Suit.UniCode())
 }
 
 type Deck [52]Card

@@ -36,13 +36,14 @@ type ServerConfig struct {
 
 type Server struct {
 	ServerConfig
-	transport *TCPTransport
-	gameState *GameState
-	peerLock  sync.RWMutex
-	peers     map[net.Addr]*Peer
-	addPeer   chan *Peer
-	delPeer   chan *Peer
-	msgCh     chan *Message
+	transport   *TCPTransport
+	gameState   *GameState
+	peerLock    sync.RWMutex
+	peers       map[net.Addr]*Peer
+	addPeer     chan *Peer
+	delPeer     chan *Peer
+	msgCh       chan *Message
+	broadcastCh chan any
 }
 
 func NewServer(cfg ServerConfig, connection int) *Server {
@@ -52,7 +53,12 @@ func NewServer(cfg ServerConfig, connection int) *Server {
 		addPeer:      make(chan *Peer, connection),
 		delPeer:      make(chan *Peer, connection),
 		msgCh:        make(chan *Message),
-		gameState:    NewGameState(),
+		broadcastCh:  make(chan any),
+	}
+	s.gameState = NewGameState(s.ListenAddr, s.broadcastCh)
+
+	if s.ListenAddr == ":3000" {
+		s.gameState.isDealer = true //for testing
 	}
 
 	tr := NewTCPTransport(s.ListenAddr)
@@ -67,6 +73,15 @@ func (s *Server) Start() {
 	go s.loop()
 
 	fmt.Printf("Started new game server port %s game :%s \n", s.ListenAddr, s.GameType.String())
+
+	// TODO: NEED TO BE MOVED LATER (ugly)
+	go func() {
+		msg := <-s.broadcastCh
+		fmt.Printf("broadcasting!!!\n")
+		if err := s.Broadcast(msg); err != nil {
+			fmt.Printf("error broadcasting: %s\n", err)
+		}
+	}()
 
 	if err := s.transport.ListenAndAccept(); err != nil {
 		panic(err)
@@ -136,6 +151,11 @@ func (s *Server) Connect(addr string) error {
 func (s *Server) loop() {
 	for {
 		select {
+		// case msg := <-s.broadcastCh:
+		// 	fmt.Printf("broadcasting!!!\n")
+		// 	if err := s.Broadcast(msg); err != nil {
+		// 		fmt.Printf("error broadcasting: %s\n", err)
+		// 	}
 		case peer := <-s.delPeer:
 			delete(s.peers, peer.conn.RemoteAddr())
 			fmt.Printf("[%s] peer %s disconnected\n", s.ListenAddr, peer.conn.RemoteAddr())
@@ -178,12 +198,14 @@ func (s *Server) handleNewPeer(peer *Peer) error {
 		}
 	}
 
-	fmt.Printf("[%s] Handshake successful with %s: %s %s, status:%s, listen address%s\n",
-		s.ListenAddr, peer.conn.RemoteAddr(),
+	fmt.Printf("[%s] Handshake successful with [%s]: %s %s, status:%s\n",
+		s.ListenAddr, peer.listenAddr,
 		hs.Version, hs.GameType, hs.GameStatus.string(),
-		peer.listenAddr)
+	)
 
 	s.handleAddPeer(peer)
+
+	s.gameState.AddPlayer(peer.listenAddr, hs.GameStatus)
 
 	return nil
 }
@@ -209,6 +231,29 @@ func (s *Server) Peers() []string {
 	return peers
 }
 
+func (s *Server) Broadcast(payload any) error {
+	var err error
+
+	msg := NewMessage(s.ListenAddr, payload)
+
+	buf := new(bytes.Buffer)
+	if err = gob.NewEncoder(buf).Encode(msg); err != nil {
+		return err
+	}
+
+	for _, p := range s.peers {
+		go func(p *Peer) {
+			if err = p.Send(buf.Bytes()); err != nil {
+				fmt.Println("Broadcast error: ", err)
+			}
+			fmt.Printf("[%s]sending cards to [%s]\n", s.ListenAddr, p.listenAddr)
+		}(p)
+
+	}
+
+	return nil
+}
+
 func (s *Server) handshake(p *Peer) (*Handshake, error) {
 	hs := &Handshake{}
 	if err := gob.NewDecoder(p.conn).Decode(hs); err != nil {
@@ -231,6 +276,11 @@ func (s *Server) handleMessage(msg *Message) error {
 	switch v := msg.Payload.(type) {
 	case MessagePeerList:
 		return s.handlePeerList(v)
+	case MessageCards:
+		fmt.Printf("[%s]received msg from [%s] -> %+v\n", s.ListenAddr, msg.From, v)
+
+		// TODO: figuring out the status when we are receiving cards
+		s.gameState.SetStatus(GamseStatusReceivingCards)
 	}
 
 	return nil
@@ -255,5 +305,13 @@ func (s *Server) isInPeerList(addr string) bool {
 }
 
 func init() {
-	gob.Register(MessagePeerList{})
+
+	register := []any{
+		MessagePeerList{},
+		MessageCards{},
+	}
+
+	for _, v := range register {
+		gob.Register(v)
+	}
 }

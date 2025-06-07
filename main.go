@@ -26,22 +26,24 @@ func wait(t time.Duration) {
 func main() {
 
 	c := 4
+	s0 := makeServerAndStart(":3000", c)
 	s1 := makeServerAndStart(":3001", c)
 	s2 := makeServerAndStart(":3002", c)
 	s3 := makeServerAndStart(":3003", c)
-	s4 := makeServerAndStart(":3004", c)
 
-	wait(1000)
+	wait(200)
 	var err error
 	err = s2.Connect(s1.ListenAddr)
 	if err != nil {
 		panic(err)
 	}
+	wait(100)
 	err = s3.Connect(s2.ListenAddr)
 	if err != nil {
 		panic(err)
 	}
-	err = s4.Connect(s3.ListenAddr)
+	wait(100)
+	err = s0.Connect(s1.ListenAddr)
 	if err != nil {
 		panic(err)
 	}
